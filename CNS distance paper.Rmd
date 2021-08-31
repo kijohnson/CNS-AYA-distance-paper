@@ -1,0 +1,1323 @@
+---
+title: "Follow-up paper distance CNS"
+author: "Kim Johnson"
+date: "5/13/2021"
+output: html_document
+---
+---
+#R VERSION: 3.6.2
+#PROJECT: Manuscript entitled "Residential distance to reporting facility and survival among adolescents, and young adults diagnosed with CNS tumors"
+#PURPOSE: Code to generate results in paper
+#AUTHORS: Kim Johnson 
+#CREATED: July 30, 2021
+#LATEST:  "`r format(Sys.time(), '%d %B, %Y')`" 
+#NOTES:   
+---
+#Load packages and open libraries used for the analysis
+```{r setup, include=FALSE}
+#install.packages("survminer") #for pairwise diffs
+#install.packages("survival")  #for calculating KM values
+#install.packages("ggplot") #for plotting KM curve
+#install.packages("table1")
+#install.packages("odds.n.ends")
+#install.packages("lmtest")
+#install.packages("gridExtra")
+#install.packages("openxlsx")
+#install.packages("dplyr")
+#install.packages("DiagrammeR")
+#install.packages("olsrr")
+# install.packages("devtools")
+devtools::install_github("thomasp85/patchwork")
+
+library(olsrr)
+library(survminer) 
+library(survival)
+library(ggplot2) 
+library(table1)
+library(openxlsx)
+library(lmtest)
+library(odds.n.ends)
+library(gridExtra)
+library(lmtest)
+library(dplyr)
+library(DiagrammeR)
+library(readr)
+library(patchwork)
+```
+
+#Load data from Box
+```{r}
+#original location
+#AYAcancer_type <- read.csv("/Users/kijohnson/Box/From Box/NCDB  (PUF) 2015.1198/NCDB 2015.1198 (all files)/NCDB1198ALLv2_cancertype.csv") #cancer case data with AYA coding
+AYA<-read_csv("/Users/kijohnson/Box/A_T Drive - kjohnson/Research/Projects/NCDB/AYA Geographic factors stage/Brain/NCDB1198ALLv2_cancertype.csv")
+```
+#Data management
+```{r}
+#variables needed: age group, RUCC codes, Urban/rural 2013, sex, race, insurance, income, percent w/o highschool degree, cancer type, distance from diagnosis/initial treatment center
+
+#make age groups
+AYA$Age_cat[AYA$AGE>=15 & AYA$AGE<20] <- 0
+AYA$Age_cat[AYA$AGE>=20 & AYA$AGE<25] <- 1
+AYA$Age_cat[AYA$AGE>=25 & AYA$AGE<30] <- 2
+AYA$Age_cat[AYA$AGE>=30 & AYA$AGE<35] <- 3
+AYA$Age_cat[AYA$AGE>=35] <- 4
+AYA$Age_cat<-factor(AYA$Age_cat,levels=c(0:4),labels=c("15-19","20-24","25-29","30-34", "35-39"))
+table(AYA$Age_cat, useNA="always")
+
+#make age groups2
+AYA$Age_cat2[AYA$AGE>=15 & AYA$AGE<20] <- 0
+AYA$Age_cat2[AYA$AGE>=20 & AYA$AGE<30] <- 1
+AYA$Age_cat2[AYA$AGE>=30 & AYA$AGE<40] <- 2
+AYA$Age_cat2<-factor(AYA$Age_cat2,levels=c(0:2),labels=c("15-19","20-29","30-39"))
+table(AYA$Age_cat2, useNA="always")
+
+#recode sex
+AYA$SEX[AYA$SEX==1] <- 1 #males coded as 1
+AYA$SEX[AYA$SEX==2] <- 0 #females coded as 0
+AYA$SEX<- factor(AYA$SEX,levels=c(1:0),labels=c("Male","Female"))
+table(AYA$SEX, useNA="always")
+
+#recode race/ethnicity
+#Code for White 1
+#Code for Black 2
+#Code for Other >=3 and !=99 (Unknown)
+AYA$RACE[AYA$RACE==1 & AYA$SPANISH_HISPANIC_ORIGIN==0]<-0
+AYA$RACE[AYA$RACE==2 & AYA$SPANISH_HISPANIC_ORIGIN==0]<-1
+AYA$RACE[AYA$RACE>=3 & AYA$RACE<99 & AYA$SPANISH_HISPANIC_ORIGIN==0]<-2
+AYA$RACE[AYA$SPANISH_HISPANIC_ORIGIN>0 &  AYA$SPANISH_HISPANIC_ORIGIN<9]<-3
+AYA$RACE<- factor(AYA$RACE,levels=c(0:3),labels=c("Non-Hispanic White","Non-Hispanic Black","Non-Hispanic Other", "Hispanic"))
+table(AYA$RACE, useNA="always")
+
+#label primary payer
+AYA$insurance<-factor(AYA$INSURANCE_STATUS, levels=c(0:4), labels=c("Not Insured", "Private Insurance/Managed Care", "Medicaid", "Medicare", "Other Government"))
+table(AYA$insurance, useNA="always")
+
+
+#education quartiles (This measure of educational attainment for each patient's area of residence is estimated by matching the zip code of the patient recorded at the time of diagnosis against files derived from the 2012 American Community Survey data, spanning years 2008-2012. 
+AYA$educ[AYA$NO_HSD_QUAR_12==1]<-0
+AYA$educ[AYA$NO_HSD_QUAR_12==2]<-1
+AYA$educ[AYA$NO_HSD_QUAR_12==3]<-2
+AYA$educ[AYA$NO_HSD_QUAR_12==4]<-3
+AYA$educ<-factor(AYA$educ, levels=c(0:3), labels=c("21% or more", "13%-20.9%", "7%-12.9%", "Less than 7%"))
+table(AYA$educ, useNA="always")
+
+
+#income quartiles 2008-2012 (Median household income for each patient's area of residence is estimated by matching the zip code of the patient recorded at the time of diagnosis against files derived from the 2012 American Community Survey data, spanning years 2008-2012 and adjusted for 2012 inflation.)
+AYA$income[AYA$MED_INC_QUAR_12==1]<-0
+AYA$income[AYA$MED_INC_QUAR_12==2]<-1
+AYA$income[AYA$MED_INC_QUAR_12==3]<-2
+AYA$income[AYA$MED_INC_QUAR_12==4]<-3
+AYA$income<-factor(AYA$income, levels=c(0:3), labels=c("Less than $38,000", "$38,000-$47,999", "$48,000-$62,999", "$63,000+"))
+table(AYA$income, useNA="always")
+
+#Rural/Urban
+AYA$RUCC[AYA$UR_CD_13==1]<-0
+AYA$RUCC[AYA$UR_CD_13==2]<-1
+AYA$RUCC[AYA$UR_CD_13==3]<-2
+AYA$RUCC[AYA$UR_CD_13==4]<-3
+AYA$RUCC[AYA$UR_CD_13==5]<-4
+AYA$RUCC[AYA$UR_CD_13==6]<-5
+AYA$RUCC[AYA$UR_CD_13==7]<-6
+AYA$RUCC[AYA$UR_CD_13==8]<-7
+AYA$RUCC[AYA$UR_CD_13==9]<-8
+AYA$RUCC<-factor(AYA$RUCC, levels=c(0:8), labels=c("Counties in metro areas of ≥ 1 million", "Counties in metro areas of 250,000 to 1 million", "Counties in metro areas of <250,000", "Urban population of ≥20,000, adjacent to a metro area", "Urban population of ≥20,000, not adjacent to a metro area", "Urban population of 2,500 to 19,999, adjacent to a metro area", "Urban population of 2,500 to 19,999, not adjacent to a metro area", "Completely rural or ≤2,500 urban population, adjacent to a metro area", "Completely rural or ≤2,500 urban population, not adjacent to a metro area"))
+table(AYA$RUCC, useNA="always") #no missing data
+
+#divide into metro, nonmetrourban, and rural
+AYA$RUCC3[AYA$RUCC=="Counties in metro areas of ≥ 1 million"|AYA$RUCC=="Counties in metro areas of 250,000 to 1 million"|AYA$RUCC=="Counties in metro areas of <250,000"]<-0
+
+AYA$RUCC3[AYA$RUCC=="Urban population of ≥20,000, adjacent to a metro area"|AYA$RUCC=="Urban population of ≥20,000, not adjacent to a metro area"|AYA$RUCC=="Urban population of 2,500 to 19,999, adjacent to a metro area"|AYA$RUCC=="Urban population of 2,500 to 19,999, not adjacent to a metro area"]<-1
+
+AYA$RUCC3[AYA$RUCC=="Completely rural or ≤2,500 urban population, adjacent to a metro area"|AYA$RUCC=="Completely rural or ≤2,500 urban population, not adjacent to a metro area"]<-2
+AYA$RUCC3<-factor(AYA$RUCC3, levels=c(0:2), labels=c("Metro", "Urban", "Rural"))
+
+table(AYA$RUCC3, AYA$RUCC, useNA="ifany")
+table(AYA$RUCC3, useNA="ifany")
+
+#greater circle distance
+#Justifcation from PMID: 24516014  "Three patient groups were created on the basis of travel distance: short ( 12.5 miles); intermediate (12.5 to 49.9 miles); long ( 50 miles). We selected 50 miles as our long-distance benchmark on the basis of work by Onega et al.9"
+AYA$GCD[AYA$CROWFLY<=12.5]<-0
+AYA$GCD[AYA$CROWFLY>12.5 & AYA$CROWFLY<=49.9]<-1
+AYA$GCD[AYA$CROWFLY>=50]<-2
+AYA$GCD<-factor(AYA$GCD, levels=c(0:2), labels=c("Short", "Intermediate", "Long"))
+table(AYA$GCD)
+
+#recode vital status
+AYA$dead[AYA$PUF_VITAL_STATUS==1]<-0
+AYA$dead[AYA$PUF_VITAL_STATUS==0]<-1
+table(AYA$dead)
+
+#person months
+summary(AYA$DX_LASTCONTACT_DEATH_MONTHS)
+
+## Brain
+AYA$brain[(AYA$PRIMARY_SITE %in% c(0:809)& AYA$HISTOLOGY %in% c(9410:9411, 9420:9421, 9424, 9401, 9440:9442, 9400, 9381:9384, 9423, 9430, 9450:9451, 9460,	9391:9394))|
+(AYA$PRIMARY_SITE %in% c(723)& AYA$HISTOLOGY %in% c(9380))|
+(AYA$PRIMARY_SITE %in% c(0:722, 724:809) & AYA$HISTOLOGY %in% c(9380))|
+  
+(AYA$PRIMARY_SITE %in% c(716) & AYA$HISTOLOGY %in% c(9470:9474))|
+(AYA$PRIMARY_SITE %in% c(0:715, 717:809) & AYA$HISTOLOGY %in% c(9470:9474))|
+(AYA$PRIMARY_SITE %in% c(0:699, 730:750, 754:809) & AYA$HISTOLOGY %in% c(9350:9351, 9360:9362, 9390, 9480, 9530:9535, 9537:9539, 9541, 9550, 9562, 9570))|
+(AYA$PRIMARY_SITE %in% c(700:729, 751:753) & AYA$HISTOLOGY %in% c(9161, 9361:9362, 9390, 9530:9531, 9535, 9538, 9540, 9560, 9571))|
+(AYA$PRIMARY_SITE %in% c(700) & AYA$HISTOLOGY %in% c(9532, 9534, 9537, 9539))|
+(AYA$PRIMARY_SITE %in% c(753) & AYA$HISTOLOGY %in% c(9360))|
+(AYA$PRIMARY_SITE %in% c(711) & AYA$HISTOLOGY %in% c(9480, 9539))|
+(AYA$PRIMARY_SITE %in% c(713) & AYA$HISTOLOGY %in% c(9480, 9533))|
+(AYA$PRIMARY_SITE %in% c(719) & AYA$HISTOLOGY %in% c(9350))|
+(AYA$PRIMARY_SITE %in% c(714,717) & AYA$HISTOLOGY %in% c(9480))|
+(AYA$PRIMARY_SITE %in% c(709) & AYA$HISTOLOGY %in% c(9539))|
+(AYA$PRIMARY_SITE %in% c(700:729, 751:753) & AYA$HISTOLOGY %in% c(8000:8005))]<-
+"3.0 CNS and Other Intracranial and Intraspinal Neoplasms (all behaviors)"
+
+AYA$braintype[(AYA$PRIMARY_SITE %in% c(0:809, 723) & AYA$HISTOLOGY %in%c(9410:9411, 9420:9421, 9424, 9380))]<-"3.1.1 Specified low-grade astrocytic tumors"
+
+AYA$braintype[(AYA$PRIMARY_SITE %in% c(0:809)& AYA$HISTOLOGY%in%c( 9401, 9440:9442))]<-"3.1.2 Glioblastoma and anaplastic astrocytoma"
+AYA$braintype[(AYA$PRIMARY_SITE %in% c(0:809)& AYA$HISTOLOGY%in%c(9400))]<-"3.1.3 Astrocytoma, NOS"
+
+AYA$braintype[(AYA$PRIMARY_SITE %in% c(0:722, 724:809)& AYA$HISTOLOGY%in%c(9380))]<-"3.2 Other glioma"
+
+AYA$braintype[(AYA$PRIMARY_SITE %in% c(0:809)& AYA$HISTOLOGY%in%c(9381:9384, 9423, 9430, 9450:9451, 9460))]<-"3.2 Other glioma"
+
+AYA$braintype[(AYA$PRIMARY_SITE %in% c(0:809)& AYA$HISTOLOGY%in%c(9391:9394))]<-"3.3 Ependymoma"
+AYA$braintype[(AYA$PRIMARY_SITE %in% c(716)& AYA$HISTOLOGY%in%c(9470:9474))]<-"3.4.1 Medulloblastoma"
+AYA$braintype[(AYA$PRIMARY_SITE %in% c(0:715, 717:809)& AYA$HISTOLOGY%in%c(9470:9474))]<-"3.4.2 Supratentorial PNET"
+
+
+AYA$braintype[(AYA$PRIMARY_SITE %in% c(0:699, 730:750, 754:809) & AYA$HISTOLOGY%in%c(9350:9351, 9360:9362, 9390, 9480, 9530:9535, 9537:9539, 9541, 9550, 9562, 9570))| 
+(AYA$PRIMARY_SITE %in% c(700:729, 751:753) & AYA$HISTOLOGY%in%c(9161, 9361:9362, 9390, 9530:9531, 9535, 9538, 9540, 9560, 9571))| 
+(AYA$PRIMARY_SITE %in% c(700) & AYA$HISTOLOGY %in%c(9532, 9534, 9537, 9539))|
+(AYA$PRIMARY_SITE==753 & AYA$HISTOLOGY==9360)|
+(AYA$PRIMARY_SITE==711 & AYA$HISTOLOGY%in%c(9480, 9539))|
+(AYA$PRIMARY_SITE==713 & AYA$HISTOLOGY%in%c(9480, 9533))|
+(AYA$PRIMARY_SITE==719 & AYA$HISTOLOGY%in%c(9350))|
+(AYA$PRIMARY_SITE%in%c(714, 717) & AYA$HISTOLOGY%in%c(9480))|
+(AYA$PRIMARY_SITE%in%c(709) &AYA$HISTOLOGY%in%c(9539))]<-"3.5 Other specified intracranial and intraspinal neoplasms"
+
+AYA$braintype[(AYA$PRIMARY_SITE %in% c(700:729, 751:753)& AYA$HISTOLOGY%in%c(8000:8005 ))]<-"3.6 Unspecified intracranial and intraspinal neoplasms"
+addmargins(table(AYA$braintype, useNA="always"))   
+
+table(AYA$braintype)
+```
+
+# Exclusions
+```{r}
+#Code to determine facility exclusions and exclude individuals reported at facilities that didn't report all years
+tab<-table(AYA$PUF_FACILITY_ID, AYA$YEAR_OF_DIAGNOSIS)
+tab2<-as.data.frame.matrix(tab)
+colnames(tab2)<-c("yr10","yr11", "yr12", "yr13", "yr14") #R doesn't like numerical column names
+tab2<-cbind(facility=rownames(tab2), tab2) #turn rows into a column (one column)
+rownames(tab2)<-NULL #remove row names from first 'column'
+
+#Code to exclude facilities not reporting all years
+tab3<-subset(tab2, yr10==0|yr11==0|yr12==0|yr13==0|yr14==0)
+facility<-as.vector(tab3$facility)
+facility
+typeof(facility)
+
+#Remove anyone with a facility vector value 
+exclude1<-AYA[!(AYA$PUF_FACILITY_ID%in%facility),]
+
+#include only first malignant brain tumors diagnosed 15-39 between 2010 and 2014
+exclude2<-exclude1[which(exclude1$AGE >=15 & (exclude1$YEAR_OF_DIAGNOSIS>=2010 & exclude1$YEAR_OF_DIAGNOSIS<=2014) & exclude1$brain=="3.0 CNS and Other Intracranial and Intraspinal Neoplasms (all behaviors)" & exclude1$SEQUENCE_NUMBER %in%c(0,1)),]
+
+#Exclude individuals seen at more that one facility
+exclude3<-exclude2[which(exclude2$PUF_MULT_SOURCE==0),]
+#n=9844
+```
+
+#Second set of exclusions of missing data for complete dataset
+```{r}
+#Exclude missing data
+CNS <- exclude3[which(exclude3$RACE!="NA"),]
+CNS <- CNS[which(CNS$insurance!="NA"),]
+CNS <- CNS[which(CNS$educ!="NA"),]
+CNS <- CNS[which(CNS$income!="NA"),]
+CNS <- CNS[which(CNS$GCD!="NA"),]
+CNS <- CNS[which(CNS$dead!="NA"),]
+CNS <- CNS[which(CNS$DX_LASTCONTACT_DEATH_MONTHS!="NA"),]
+dim(CNS)
+
+table(CNS$educ, CNS$income)
+table1(~educ|income, droplevels=TRUE, data=CNS)
+#n=9335
+```
+
+# Figure 1: flowchart for stage
+```{r}
+grViz("digraph flowchart {
+      # node definitions with substituted label text
+      node [fontname = Helvetica, shape = rectangle, fontsize=16]        
+      tab1 [label = '@@1']
+      tab2 [label = '@@2']
+      tab3 [label = '@@3']
+      tab4 [label = '@@4']
+      tab5 [label = '@@5']
+      # edge definitions with the node IDs
+      tab1 -> tab2 -> tab3 -> tab4 -> tab5;
+      }
+      [1]: 'Records received from NCDB for diagnoses in 0-39 2004-2015 n=780,847'
+      [2]: 'Excluding 40,778 individuals seen at facilities not reporting in all years n=740, 069' 
+      [3]: 'Excuding 728,293 individuals outside of the age range of 15-39 years, those diagnosed before 2010, \\n and those not diagnosed with not first primary brain tumor malignancies n=11,776'
+      [4]: 'Excluding 1,932 individuals seen at more than one facility n=9,844'
+      [5]: 'Excluding 509 individuals with missing data on variables used in the analysis n=9,335)'
+      ")
+
+```
+# Descriptive characteristics for overall survival dataset
+```{r}
+label(CNS$insurance)<-"Insurance at diagnosis or first treatment"
+label(CNS$educ)<-"Zip-code median percent no high school degree quartile 2008-2012"
+label(CNS$income)<-"Zip-code median income quartile 2008-2012"
+label(CNS$GCD)<-"Distance from reporting hospital"
+label(CNS$braintype)<-"CNS tumor subtype"
+table1(~SEX + Age_cat + RACE + insurance  + income + educ + braintype |GCD, droplevels=TRUE, data=CNS)
+
+```
+
+```{r}
+addmargins(table(CNS$braintype, CNS$dead, useNA="always"))  
+```
+
+
+
+```{r}
+#Brain
+Brain.1<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE +income +educ,  CNS) 
+summary(Brain.1)
+
+Brain.1<-exp(cbind(HR = coef(Brain.1), confint(Brain.1))) #calculate HRs and 95% CIs
+  Brain.1 #print HRs and 95% CIs
+  
+#Effect modification by Tumor type
+Brain.1EMa<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income + braintype,  CNS) 
+
+Brain.1EMb<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income + braintype + GCD*braintype,  CNS) 
+
+lrtest(Brain.1EMa, Brain.1EMb)
+
+#Effect modification by Race
+
+Brain.1EMc<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income + braintype,  CNS) 
+summary(Brain.1EMc)
+
+Brain.1EMd<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income  + braintype + GCD*RACE,  CNS) 
+summary(Brain.1EMd)
+
+lrtest(Brain.1EMc, Brain.1EMd)
+
+Brain.1White<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX  + educ + income,  CNS[which(CNS$RACE=="Non-Hispanic White"),]) 
+summary(Brain.1White)
+
+Brain.1Black<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX  + educ + income,  CNS[which(CNS$RACE=="Non-Hispanic Black"),]) 
+summary(Brain.1Black)
+
+Brain.1Hispanic<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX  + educ + income,  CNS[which(CNS$RACE=="Hispanic"),]) 
+summary(Brain.1Hispanic)
+
+Brain.1Other<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX  + educ + income,  CNS[which(CNS$RACE=="Non-Hispanic Other"),]) 
+summary(Brain.1Other)
+
+
+#Effect modification by sex
+Brain.1EMe<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income,  CNS) 
+summary(Brain.1EMe)
+
+Brain.1EMf<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income  + GCD*SEX,  CNS) 
+summary(Brain.1EMf)
+lrtest(Brain.1EMe, Brain.1EMf)
+
+#Effect modification by income
+Brain.1EMe<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income,  CNS) 
+summary(Brain.1EMe)
+
+Brain.1EMf<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ+ income  + GCD*income,  CNS) 
+summary(Brain.1EMf)
+
+lrtest(Brain.1EMe, Brain.1EMf)
+
+Brain.1income<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ,  CNS[which(CNS$income=="$63,000+"),]) 
+summary(Brain.1income)
+
+Brain.1income<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ,  CNS[which(CNS$income=="$48,000-$62,999"),]) 
+summary(Brain.1income)
+
+Brain.1income<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ,  CNS[which(CNS$income=="$38,000-$47,999"),]) 
+summary(Brain.1income)
+
+Brain.1income<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ,  CNS[which(CNS$income=="Less than $38,000"),]) 
+summary(Brain.1income)
+
+#Effect modification by education
+Brain.1EMe<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ,  CNS) 
+summary(Brain.1EMe)
+
+Brain.1EMf<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ  + GCD*educ,  CNS) 
+summary(Brain.1EMf)
+lrtest(Brain.1EMe, Brain.1EMf)
+#no EM by education
+
+#Effect modification by insurance
+Brain.1EMe<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + insurance,  CNS) 
+summary(Brain.1EMe)
+
+Brain.1EMf<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + insurance  + GCD*insurance,  CNS) 
+summary(Brain.1EMf)
+lrtest(Brain.1EMe, Brain.1EMf)
+
+#Brain 
+Brain.2<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income, subset=CNS$braintype=="3.1.1 Specified low-grade astrocytic tumors", CNS) 
+summary(Brain.2)
+
+Brain.2<-exp(cbind(HR = coef(Brain.2), confint(Brain.2))) #calculate HRs and 95% CIs
+  Brain.2 #print HRs and 95% CIs
+
+Brain.3<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income, subset=CNS$braintype=="3.1.2 Glioblastoma and anaplastic astrocytoma", CNS) 
+summary(Brain.3)
+
+Brain.3<-exp(cbind(HR = coef(Brain.3), confint(Brain.3))) #calculate HRs and 95% CIs
+  Brain.3 #print HRs and 95% CIs
+
+Brain.4<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income, subset=CNS$braintype=="3.1.3 Astrocytoma, NOS", CNS) 
+summary(Brain.4)
+
+Brain.4<-exp(cbind(HR = coef(Brain.4), confint(Brain.4))) #calculate HRs and 95% CIs
+  Brain.4 #print HRs and 95% CIs
+
+Brain.5<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income, subset=CNS$braintype=="3.2 Other glioma", CNS) 
+summary(Brain.5)
+
+Brain.5<-exp(cbind(HR = coef(Brain.5), confint(Brain.5))) #calculate HRs and 95% CIs
+  Brain.5 #print HRs and 95% CIs
+
+Brain.6<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income, subset=CNS$braintype=="3.3 Ependymoma", CNS) 
+summary(Brain.6)
+
+Brain.6<-exp(cbind(HR = coef(Brain.6), confint(Brain.6))) #calculate HRs and 95% CIs
+  Brain.6 #print HRs and 95% CIs
+
+Brain.7<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income, subset=CNS$braintype=="3.4.1 Medulloblastoma", CNS) 
+summary(Brain.7)
+
+Brain.7<-exp(cbind(HR = coef(Brain.7), confint(Brain.7))) #calculate HRs and 95% CIs
+  Brain.7 #print HRs and 95% CIs
+
+Brain.8<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income, subset=CNS$braintype=="3.4.2 Supratentorial PNET", CNS) 
+summary(Brain.8)
+
+Brain.8<-exp(cbind(HR = coef(Brain.8), confint(Brain.8))) #calculate HRs and 95% CIs
+  Brain.8 #print HRs and 95% CIs
+
+Brain.9<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income, subset=CNS$braintype=="3.5 Other specified intracranial and intraspinal neoplasms", CNS) 
+summary(Brain.9)
+
+Brain.9<-exp(cbind(HR = coef(Brain.9), confint(Brain.9))) #calculate HRs and 95% CIs
+  Brain.9 #print HRs and 95% CIs
+```
+
+```{r}
+#make empty data frame
+table<-data.frame(matrix(ncol=5, nrow=0))
+columns<-c("CNS tumor type", "Reporting hospital distance category","HR", "LowerCI", "UpperCI")
+colnames(table)<-columns
+
+table[1,]<-c('CNS overall','Short', 1.0, "reference", "", digits=3)
+table[2,]<-c('CNS overall',  'Intermediate', format(Brain.1[1,1], digits=3), format(Brain.1[1,2], digits=3), format(Brain.1[1,3], digits=3))
+table[3,]<-c('CNS overall',  'Long', format(Brain.1[2,1], digits=3), format(Brain.1[2,2], digits=3), format(Brain.1[2,3], digits=3))
+
+table[4,]<-c('LGG','Short', 1.0, "reference", "", digits=3)
+table[5,]<-c('LGG',  'Intermediate', format(Brain.2[1,1], digits=3), format(Brain.2[1,2], digits=3), format(Brain.2[1,3], digits=3))
+table[6,]<-c('LGG',  'Long', format(Brain.2[2,1], digits=3), format(Brain.2[2,2], digits=3), format(Brain.2[2,3], digits=3))
+
+table[7,]<-c('GBM','Short', 1.0, "reference", "", digits=3)
+table[8,]<-c('GBM',  'Intermediate', format(Brain.3[1,1], digits=3), format(Brain.3[1,2], digits=3), format(Brain.3[1,3], digits=3))
+table[9,]<-c('GBM',  'Long', format(Brain.3[2,1], digits=3), format(Brain.3[2,2], digits=3), format(Brain.3[2,3], digits=3))
+
+table[10,]<-c('ANOS','Short', 1.0, "reference", "", digits=3)
+table[11,]<-c('ANOS',  'Intermediate', format(Brain.4[1,1], digits=3), format(Brain.4[1,2], digits=3), format(Brain.4[1,3], digits=3))
+table[12,]<-c('ANOS',  'Long', format(Brain.4[2,1], digits=3), format(Brain.4[2,2], digits=3), format(Brain.4[2,3], digits=3))
+
+table[13,]<-c('OTHG','Short', 1.0, "reference", "", digits=3)
+table[14,]<-c('OTHG',  'Intermediate', format(Brain.5[1,1], digits=3), format(Brain.5[1,2], digits=3), format(Brain.5[1,3], digits=3))
+table[15,]<-c('OTHG',  'Long', format(Brain.5[2,1], digits=3), format(Brain.5[2,2], digits=3), format(Brain.5[2,3], digits=3))
+
+table[16,]<-c('EPDM','Short', 1.0, "reference", "", digits=3)
+table[17,]<-c('EPDM',  'Intermediate', format(Brain.6[1,1], digits=3), format(Brain.6[1,2], digits=3), format(Brain.6[1,3], digits=3))
+table[18,]<-c('EPDM',  'Long', format(Brain.6[2,1], digits=3), format(Brain.6[2,2], digits=3), format(Brain.6[2,3], digits=3))
+
+table[19,]<-c('MB','Short', 1.0, "reference", "", digits=3)
+table[20,]<-c('MB',  'Intermediate', format(Brain.7[1,1], digits=3), format(Brain.7[1,2], digits=3), format(Brain.7[1,3], digits=3))
+table[21,]<-c('MB',  'Long', format(Brain.7[2,1], digits=3), format(Brain.7[2,2], digits=3), format(Brain.7[2,3], digits=3))
+
+table[22,]<-c('PNET','Short', 1.0, "reference", "", digits=3)
+table[23,]<-c('PNET',  'Intermediate', format(Brain.8[1,1], digits=3), format(Brain.8[1,2], digits=3), format(Brain.8[1,3], digits=3))
+table[24,]<-c('PNET',  'Long', format(Brain.8[2,1], digits=3), format(Brain.8[2,2], digits=3), format(Brain.8[2,3], digits=3))
+
+table[25,]<-c('UNS','Short', 1.0, "reference", "", digits=3)
+table[26,]<-c('UNS',  'Intermediate', format(Brain.9[1,1], digits=3), format(Brain.9[1,2], digits=3), format(Brain.9[1,3], digits=3))
+table[27,]<-c('UNS',  'Long', format(Brain.9[2,1], digits=3), format(Brain.9[2,2], digits=3), format(Brain.9[2,3], digits=3))
+
+table$CNS_type_f=factor(table$`CNS tumor type`, labels=c("Astrocytoma NOS", "CNS overall", "Ependymoma", "GBM", "Low Grade Glioma", "Medulloblastoma",  "Other Glioma", "PNET","Other/Unspecified"))
+table$HR<-as.numeric(table$HR)
+table$LowerCI<-as.numeric(table$LowerCI)
+table$UpperCI<-as.numeric(table$UpperCI)
+```
+
+# RUCC3 adjustment
+```{r}
+#Brain
+Brain.1<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE +income +educ +RUCC3 ,  CNS) 
+summary(Brain.1)
+
+Brain.1<-exp(cbind(HR = coef(Brain.1), confint(Brain.1))) #calculate HRs and 95% CIs
+  Brain.1 #print HRs and 95% CIs
+
+#Effect modification by Tumor type
+Brain.1EMa<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income + braintype +RUCC3 ,  CNS) 
+
+Brain.1EMb<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income + braintype + GCD*braintype + RUCC3 ,  CNS) 
+
+lrtest(Brain.1EMa, Brain.1EMb)
+
+#Effect modification by Race
+
+Brain.1EMc<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +braintype +RUCC3 ,  CNS) 
+summary(Brain.1EMc)
+
+Brain.1EMd<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income  + braintype + GCD*RACE +RUCC3 ,  CNS) 
+summary(Brain.1EMd)
+
+lrtest(Brain.1EMc, Brain.1EMd)
+
+Brain.1White<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX  + educ + income +RUCC3 ,  CNS[which(CNS$RACE=="Non-Hispanic White"),]) 
+summary(Brain.1White)
+
+Brain.1Black<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX  + educ + income +RUCC3 ,  CNS[which(CNS$RACE=="Non-Hispanic Black"),]) 
+summary(Brain.1Black)
+
+Brain.1Hispanic<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX  + educ + income +RUCC3 ,  CNS[which(CNS$RACE=="Hispanic"),]) 
+summary(Brain.1Hispanic)
+
+Brain.1Other<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX  + educ + income +RUCC3 ,  CNS[which(CNS$RACE=="Non-Hispanic Other"),]) 
+summary(Brain.1Other)
+
+
+#Effect modification by sex
+Brain.1EMe<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +RUCC3 ,  CNS) 
+summary(Brain.1EMe)
+
+Brain.1EMf<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income  + GCD*SEX +RUCC3 ,  CNS) 
+summary(Brain.1EMf)
+lrtest(Brain.1EMe, Brain.1EMf)
+
+#Effect modification by income
+Brain.1EMe<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +RUCC3 ,  CNS) 
+summary(Brain.1EMe)
+
+Brain.1EMf<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ+ income  + GCD*income +RUCC3 ,  CNS) 
+summary(Brain.1EMf)
+
+lrtest(Brain.1EMe, Brain.1EMf)
+
+Brain.1income<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ +RUCC3 ,  CNS[which(CNS$income=="$63,000+"),]) 
+summary(Brain.1income)
+
+Brain.1income<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ +RUCC3 ,  CNS[which(CNS$income=="$48,000-$62,999"),]) 
+summary(Brain.1income)
+
+Brain.1income<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ +RUCC3 ,  CNS[which(CNS$income=="$38,000-$47,999"),]) 
+summary(Brain.1income)
+
+Brain.1income<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ +RUCC3 ,  CNS[which(CNS$income=="Less than $38,000"),]) 
+summary(Brain.1income)
+
+#Effect modification by education
+Brain.1EMe<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ +RUCC3 ,  CNS) 
+summary(Brain.1EMe)
+
+Brain.1EMf<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ  + GCD*educ +RUCC3 ,  CNS) 
+summary(Brain.1EMf)
+lrtest(Brain.1EMe, Brain.1EMf)
+#no EM by education
+
+#Effect modification by insurance
+Brain.1EMe<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + insurance +RUCC3 ,  CNS) 
+summary(Brain.1EMe)
+
+Brain.1EMf<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + insurance  + GCD*insurance +RUCC3 ,  CNS) 
+summary(Brain.1EMf)
+lrtest(Brain.1EMe, Brain.1EMf)
+
+
+#Brain 
+Brain.2<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +RUCC3 , subset=CNS$braintype=="3.1.1 Specified low-grade astrocytic tumors", CNS) 
+summary(Brain.2)
+
+Brain.2<-exp(cbind(HR = coef(Brain.2), confint(Brain.2))) #calculate HRs and 95% CIs
+  Brain.2 #print HRs and 95% CIs
+
+Brain.3<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +RUCC3 , subset=CNS$braintype=="3.1.2 Glioblastoma and anaplastic astrocytoma", CNS) 
+summary(Brain.3)
+
+Brain.3<-exp(cbind(HR = coef(Brain.3), confint(Brain.3))) #calculate HRs and 95% CIs
+  Brain.3 #print HRs and 95% CIs
+
+Brain.4<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +RUCC3 , subset=CNS$braintype=="3.1.3 Astrocytoma, NOS", CNS) 
+summary(Brain.4)
+
+Brain.4<-exp(cbind(HR = coef(Brain.4), confint(Brain.4))) #calculate HRs and 95% CIs
+  Brain.4 #print HRs and 95% CIs
+
+Brain.5<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +RUCC3 , subset=CNS$braintype=="3.2 Other glioma", CNS) 
+summary(Brain.5)
+
+Brain.5<-exp(cbind(HR = coef(Brain.5), confint(Brain.5))) #calculate HRs and 95% CIs
+  Brain.5 #print HRs and 95% CIs
+
+Brain.6<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +RUCC3 , subset=CNS$braintype=="3.3 Ependymoma", CNS) 
+summary(Brain.6)
+
+Brain.6<-exp(cbind(HR = coef(Brain.6), confint(Brain.6))) #calculate HRs and 95% CIs
+  Brain.6 #print HRs and 95% CIs
+
+Brain.7<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +RUCC3 , subset=CNS$braintype=="3.4.1 Medulloblastoma", CNS) 
+summary(Brain.7)
+
+Brain.7<-exp(cbind(HR = coef(Brain.7), confint(Brain.7))) #calculate HRs and 95% CIs
+  Brain.7 #print HRs and 95% CIs
+
+Brain.8<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +RUCC3 , subset=CNS$braintype=="3.4.2 Supratentorial PNET", CNS) 
+summary(Brain.8)
+
+Brain.8<-exp(cbind(HR = coef(Brain.8), confint(Brain.8))) #calculate HRs and 95% CIs
+  Brain.8 #print HRs and 95% CIs
+
+Brain.9<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +RUCC3 , subset=CNS$braintype=="3.5 Other specified intracranial and intraspinal neoplasms", CNS) 
+summary(Brain.9)
+
+Brain.9<-exp(cbind(HR = coef(Brain.9), confint(Brain.9))) #calculate HRs and 95% CIs
+  Brain.9 #print HRs and 95% CIs
+```
+
+
+#proportional hazards assumption
+```{r}
+
+Brain.1<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE +income +educ ,  CNS) 
+summary(Brain.1)
+
+test.phb<-cox.zph(Brain.1, terms=FALSE)
+test.phb
+
+ggcoxzph(test.phb)
+
+#ph assumption not met for race and education so add them as strata
+Brain.1<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + strata(RACE) +income + strata(educ),  CNS) 
+summary(Brain.1)
+```
+
+# N
+```{r}
+table(CNS$braintype)
+```
+
+
+# KM plot Figure 2
+```{r}
+#A
+GCD.surva <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data= CNS)
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS)
+
+a<-ggsurvplot(GCD.surva,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="A. CNS tumors overall",legend.labs = c("Short", "Intermediate", "Long"), censor.size=0.5, legend.title="",  xlab="", palette=c( "green","purple", "orange")) +
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("none"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+ 
+pairwise_survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS, rho = 0)
+a
+
+#B
+GCD.survb <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$braintype=="3.1.1 Specified low-grade astrocytic tumors"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$braintype=="3.1.1 Specified low-grade astrocytic tumors"),])
+
+b<-ggsurvplot(GCD.survb,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="B. 3.1.1 Specified low-grade \nastrocytic tumors", legend.labs = c("Short", "Intermediate", "Long"), ylab="", censor.size=0.5, legend.title="", xlab="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("none"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+b
+
+#C
+GCD.survc <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$braintype=="3.1.2 Glioblastoma and anaplastic astrocytoma"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$braintype=="3.1.2 Glioblastoma and anaplastic astrocytoma"),])
+
+c<-ggsurvplot(GCD.survc,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="C. 3.1.2 Glioblastoma and \nanaplastic astrocytoma", legend.labs = c("Short", "Intermediate", "Long"), ylab="", censor.size=0.5, legend.title="", xlab="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("none"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+c
+
+#D
+GCD.survd <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$braintype=="3.1.3 Astrocytoma, NOS"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$braintype=="3.1.3 Astrocytoma, NOS"),])
+
+d<-ggsurvplot(GCD.survd,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="D. 3.1.3 Astrocytoma, NOS", legend.labs = c("Short", "Intermediate", "Long"),  censor.size=0.5, legend.title="", xlab="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("none"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+d
+
+#E
+GCD.surve <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$braintype=="3.2 Other glioma"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$braintype=="3.2 Other glioma"),])
+
+e<-ggsurvplot(GCD.surve,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="E. 3.2 Other glioma", legend.labs = c("Short", "Intermediate", "Long"),  ylab="", censor.size=0.5, legend.title="", xlab="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("none"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+e
+
+#F
+GCD.survf <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$braintype=="3.3 Ependymoma"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$braintype=="3.3 Ependymoma"),])
+
+f<-ggsurvplot(GCD.survf,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="F. 3.3 Ependymoma", legend.labs = c("Short", "Intermediate", "Long"),  ylab="", censor.size=0.5, legend.title="",  xlab="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("none"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+f
+
+#G
+GCD.survg <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$braintype=="3.4.1 Medulloblastoma"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$braintype=="3.4.1 Medulloblastoma"),])
+
+g<-ggsurvplot(GCD.survg,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="G. 3.4.1 Medulloblastoma",legend.labs = c("Short", "Intermediate", "Long"), xlab="Time (months)", censor.size=0.5, legend.title="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("none"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+g
+
+#H
+GCD.survh <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$braintype=="3.4.2 Supratentorial PNET"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$braintype=="3.4.2 Supratentorial PNET"),])
+
+h<-ggsurvplot(GCD.survh,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="H. 3.4.2 Supratentorial PNET",legend.labs = c("Short", "Intermediate", "Long"), xlab="Time (months)",ylab="", censor.size=0.5, legend.title="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("none"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+h
+
+#I
+GCD.survi <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$braintype=="3.5 Other specified intracranial and intraspinal neoplasms"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$braintype=="3.5 Other specified intracranial and intraspinal neoplasms"),])
+
+i<-ggsurvplot(GCD.survi,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="I. 3.5 Other specified intracranial \nand intraspinal neoplasms", legend.labs = c("Short", "Intermediate", "Long"), xlab="Time (months)", ylab="", censor.size=0.5, legend.title="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("bottom"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+i
+
+library(patchwork)
+pdf("Figure2.pdf", width=11, height=10, paper="USr")
+a$plot + b$plot +c$plot +d$plot + e$plot + f$plot + g$plot +h$plot +i$plot + plot_layout(ncol=3, nrow=3, guides='collect')  &  theme(legend.position='bottom') 
+dev.off()
+
+
+```
+
+## KM Plot Figure 3
+```{r}
+#J
+GCD.survj <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$RACE=="Non-Hispanic White"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$RACE=="Non-Hispanic White"),])
+
+j<-ggsurvplot(GCD.survj,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="A. Non-Hipanic White",legend.labs = c("Short", "Intermediate", "Long"), xlab="", censor.size=0.5, legend.title="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("none"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+j
+
+#K
+GCD.survk <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$RACE=="Non-Hispanic Black"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$RACE=="Non-Hispanic Black"),])
+
+k<-ggsurvplot(GCD.survk,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title= "B. Non-Hispanic Black",legend.labs = c("Short", "Intermediate", "Long"), xlab="", ylab="", censor.size=0.5, legend.title="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("none"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+k
+
+#L
+GCD.survl <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$income=="$63,000+"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$income=="$63,000+"),])
+
+l<-ggsurvplot(GCD.survl,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="E. $63,000+",legend.labs = c("Short", "Intermediate", "Long"), xlab="Time (months)", censor.size=0.5, legend.title="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("none"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+l
+
+#M
+GCD.survm <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$income=="$48,000-$62,999"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$income=="$48,000-$62,999"),])
+
+m<-ggsurvplot(GCD.survm,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="F. $48,000-$62,999",legend.labs = c("Short", "Intermediate", "Long"), xlab="Time (months)", ylab="",  censor.size=0.5, legend.title="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("bottom"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+m
+
+#N
+GCD.survn <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$income=="$38,000-$47,999"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$income=="$38,000-$47,999"),])
+
+n<-ggsurvplot(GCD.survn,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="G. $38,000-$47,999",legend.labs = c("Short", "Intermediate", "Long"), xlab="Time (months)", ylab="", censor.size=0.5, legend.title="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("bottom"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+n
+
+#O
+GCD.survo <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$income=="Less than $38,000"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$income=="Less than $38,000"),])
+
+o<-ggsurvplot(GCD.survo,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="H. Less than $38,000",legend.labs = c("Short", "Intermediate", "Long"), xlab="Time (months)", ylab="", censor.size=0.5, legend.title="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("bottom"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+o
+
+#P
+GCD.survp <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$RACE=="Hispanic"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$RACE=="Hispanic"),])
+
+p<-ggsurvplot(GCD.survp,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="C. Hispanic",legend.labs = c("Short", "Intermediate", "Long"), xlab="", ylab="", censor.size=0.5, legend.title="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("none"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+p
+
+#Q
+GCD.survq <- survfit(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead) ~ GCD, data=CNS[which(CNS$RACE=="Non-Hispanic Other"),])
+
+survdiff(Surv(DX_LASTCONTACT_DEATH_MONTHS,dead) ~ GCD, data=CNS[which(CNS$RACE=="Non-Hispanic Other"),])
+
+q<-ggsurvplot(GCD.survq,  pval=TRUE, ylim=c(0,1),  size=0.3, conf.int=FALSE, censor=TRUE,  title="D. Non-Hispanic Other",legend.labs = c("Short", "Intermediate", "Long"), xlab="", ylab="", censor.size=0.5, legend.title="", palette=c( "green","purple", "orange")) + 
+theme_survminer(font.main = c(11, "bold", "black"), legend=c("none"), font.legend=c(10, "bold", "black"), font.y=c("bold"), font.x=c("bold"))
+q
+
+library(patchwork)
+pdf("Figure 3.pdf", width=11, height=10, paper="USr")
+j$plot + k$plot + p$plot+ q$plot+ l$plot+ m$plot+ n$plot + o$plot + plot_layout(ncol=4, nrow=2, guides='collect') &
+  theme(legend.position='bottom')
+dev.off()
+```
+
+#Adjust for facility volume
+```{r}
+#create facility volume dataset
+facility_vol_cns<-as.data.frame(table(CNS$PUF_FACILITY_ID))
+colnames(facility_vol_cns)<-c("PUF_FACILITY_ID", "CNS_VOL")
+table(facility_vol_cns$CNS_VOL)
+class(facility_vol_cns$CNS_VOL)
+
+facility_vol_cns2<-as.data.frame(table(facility_vol_cns$CNS_VOL))
+colnames(facility_vol_cns2)<-c("Number of CNS tumor cases", "Number of facilities")
+
+#merge CNS and facility_vol_cns by PUF_FACILITY_ID
+
+brain<-merge(CNS, facility_vol_cns, by="PUF_FACILITY_ID")
+
+#Determine quartiles
+summary(brain$CNS_VOL)
+
+brain$vol_quartile[brain$CNS_VOL<=11]<-0
+brain$vol_quartile[brain$CNS_VOL>11 & brain$CNS_VOL<29]<-1
+brain$vol_quartile[brain$CNS_VOL>=29 & brain$CNS_VOL<63]<-2
+brain$vol_quartile[brain$CNS_VOL>=63]<-3
+
+
+brain$vol_quartile<-factor(brain$vol_quartile, levels=c(0:3), labels=c("Q1", "Q2", "Q3", "Q4"))
+
+facility_vol_cns2$`Number of CNS tumor cases`<-as.numeric(as.character(facility_vol_cns2$`Number of CNS tumor cases`))
+
+
+#Histogram of facility volume
+pdf("Online Resource Figure 1.pdf", width=11, height=10, paper="USr")
+p<-ggplot(facility_vol_cns2, aes(`Number of CNS tumor cases`, `Number of facilities` )) + 
+geom_bar(stat="identity", fill = "blue") + 
+theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title.x = element_text(size=14, face="bold", colour = "black"), axis.title.y = element_text(size=14, face="bold", colour = "black"), panel.background = element_blank(), axis.line=element_line())
+p
+dev.off()
+
+
+# look at means by distance
+summary(brain[which(brain$GCD=="Short"),]$CNS_VOL)
+sd(brain[which(brain$GCD=="Short"),]$CNS_VOL)
+summary(brain[which(brain$GCD=="Intermediate"),]$CNS_VOL)
+sd(brain[which(brain$GCD=="Intermediate"),]$CNS_VOL)
+summary(brain[which(brain$GCD=="Long"),]$CNS_VOL)
+sd(brain[which(brain$GCD=="Long"),]$CNS_VOL)
+
+
+```
+## Models adjusted for  facility volume
+```{r}
+#adjusted for volume
+Brain.1<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +vol_quartile,  brain) 
+summary(Brain.1)
+
+Brain.1r<-exp(cbind(HR = coef(Brain.1), confint(Brain.1))) #calculate HRs and 95% CIs
+
+Brain.1r #print HRs and 95% CIs
+
+#effect modification by volume?
+
+Brain.1em<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +vol_quartile + vol_quartile*GCD,  brain) 
+summary(Brain.1em)
+
+lrtest(Brain.1, Brain.1em)
+
+#ph assumption
+Brain.1<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE +income +educ +vol_quartile ,  brain) 
+summary(Brain.1)
+
+test.phb<-cox.zph(Brain.1, terms=TRUE)
+test.phb
+
+ggcoxzph(test.phb)
+
+Brain.1<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + strata(RACE) + strata(income) + strata(educ) +vol_quartile ,  brain) 
+summary(Brain.1)
+
+Brain.1r<-exp(cbind(HR = coef(Brain.1), confint(Brain.1))) #calculate HRs and 95% CIs
+  Brain.1r #print HRs and 95% CIs
+
+test.phb<-cox.zph(Brain.1, terms=TRUE)
+test.phb
+```
+## Table 2: Model 2: Brain subtypes
+```{r}
+Brain.1<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +vol_quartile, brain) 
+summary(Brain.2)
+
+Brain.1<-exp(cbind(HR = coef(Brain.1), confint(Brain.1))) #calculate HRs and 95% CIs
+  Brain.1 #print HRs and 95% CIs
+
+Brain.2<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +vol_quartile, subset=braintype=="3.1.1 Specified low-grade astrocytic tumors", brain) 
+summary(Brain.2)
+
+Brain.2<-exp(cbind(HR = coef(Brain.2), confint(Brain.2))) #calculate HRs and 95% CIs
+  Brain.2 #print HRs and 95% CIs
+
+Brain.3<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +vol_quartile, subset=braintype=="3.1.2 Glioblastoma and anaplastic astrocytoma", brain) 
+summary(Brain.3)
+
+Brain.3<-exp(cbind(HR = coef(Brain.3), confint(Brain.3))) #calculate HRs and 95% CIs
+  Brain.3 #print HRs and 95% CIs
+
+Brain.4<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +vol_quartile, subset=braintype=="3.1.3 Astrocytoma, NOS", brain) 
+summary(Brain.4)
+
+Brain.4<-exp(cbind(HR = coef(Brain.4), confint(Brain.4))) #calculate HRs and 95% CIs
+  Brain.4 #print HRs and 95% CIs
+
+Brain.5<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +vol_quartile, subset=braintype=="3.2 Other glioma", brain) 
+summary(Brain.5)
+
+Brain.5<-exp(cbind(HR = coef(Brain.5), confint(Brain.5))) #calculate HRs and 95% CIs
+  Brain.5 #print HRs and 95% CIs
+
+Brain.6<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +vol_quartile, subset=braintype=="3.3 Ependymoma", brain) 
+summary(Brain.6)
+
+Brain.6<-exp(cbind(HR = coef(Brain.6), confint(Brain.6))) #calculate HRs and 95% CIs
+  Brain.6 #print HRs and 95% CIs
+
+Brain.7<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +vol_quartile, subset=braintype=="3.4.1 Medulloblastoma", brain) 
+summary(Brain.7)
+
+Brain.7<-exp(cbind(HR = coef(Brain.7), confint(Brain.7))) #calculate HRs and 95% CIs
+  Brain.7 #print HRs and 95% CIs
+
+Brain.8<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +vol_quartile, subset=braintype=="3.4.2 Supratentorial PNET", brain) 
+summary(Brain.8)
+
+Brain.8<-exp(cbind(HR = coef(Brain.8), confint(Brain.8))) #calculate HRs and 95% CIs
+  Brain.8 #print HRs and 95% CIs
+
+Brain.9<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ + income +vol_quartile, subset=braintype=="3.5 Other specified intracranial and intraspinal neoplasms", brain) 
+summary(Brain.9)
+
+Brain.9<-exp(cbind(HR = coef(Brain.9), confint(Brain.9))) #calculate HRs and 95% CIs
+  Brain.9 #print HRs and 95% CIs
+
+Brain.10<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + educ + income +vol_quartile, subset=RACE=="Non-Hispanic White", brain) 
+summary(Brain.10)
+
+Brain.10<-exp(cbind(HR = coef(Brain.10), confint(Brain.10))) #calculate HRs and 95% CIs
+  Brain.10 #print HRs and 95% CIs
+
+Brain.11<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + educ + income +vol_quartile, subset=RACE=="Non-Hispanic Black", brain) 
+summary(Brain.11)
+
+Brain.11<-exp(cbind(HR = coef(Brain.11), confint(Brain.11))) #calculate HRs and 95% CIs
+  Brain.11 #print HRs and 95% CIs  
+  
+Brain.11b<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + educ + income +vol_quartile, subset=RACE=="Hispanic", brain) 
+summary(Brain.11b)
+
+Brain.11b<-exp(cbind(HR = coef(Brain.11b), confint(Brain.11b))) #calculate HRs and 95% CIs
+  Brain.11b #print HRs and 95% CIs  
+
+Brain.11c<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + educ + income +vol_quartile, subset=RACE=="Non-Hispanic Other", brain) 
+summary(Brain.11c)
+
+Brain.11c<-exp(cbind(HR = coef(Brain.11c), confint(Brain.11c))) #calculate HRs and 95% CIs
+  Brain.11c #print HRs and 95% CIs
+  
+Brain.12<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ +vol_quartile, subset=income=="$63,000+", brain) 
+summary(Brain.12)
+
+Brain.12<-exp(cbind(HR = coef(Brain.12), confint(Brain.12))) #calculate HRs and 95% CIs
+  Brain.12 #print HRs and 95% CIs  
+  
+Brain.13<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ +vol_quartile, subset=income=="$48,000-$62,999", brain) 
+summary(Brain.13)
+
+Brain.13<-exp(cbind(HR = coef(Brain.13), confint(Brain.13))) #calculate HRs and 95% CIs
+  Brain.13 #print HRs and 95% CIs 
+  
+Brain.14<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ +vol_quartile, subset=income=="$38,000-$47,999", brain) 
+summary(Brain.14)
+
+Brain.14<-exp(cbind(HR = coef(Brain.14), confint(Brain.14))) #calculate HRs and 95% CIs
+  Brain.14 #print HRs and 95% CIs 
+  
+  
+Brain.15<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~GCD + AGE + SEX + RACE + educ +vol_quartile, subset=income=="Less than $38,000", brain) 
+summary(Brain.15)
+
+Brain.15<-exp(cbind(HR = coef(Brain.15), confint(Brain.15))) #calculate HRs and 95% CIs
+  Brain.15 #print HRs and 95% CIs 
+```
+
+## for table 2
+```{r}
+#make empty data frame
+table2<-data.frame(matrix(ncol=5, nrow=0))
+columns<-c("CNS tumor type", "Reporting hospital distance category","HR", "LowerCI", "UpperCI")
+colnames(table2)<-columns
+
+table2[1,]<-c('CNS overall','Short', 1.0, "reference", "", digits=3)
+
+table2[2,]<-c('CNS overall',  'Intermediate', format(Brain.1[1,1], digits=3), format(Brain.1[1,2], digits=3), format(Brain.1[1,3], digits=3))
+table2[3,]<-c('CNS overall',  'Long', format(Brain.1[2,1], digits=3), format(Brain.1[2,2], digits=3), format(Brain.1[2,3], digits=3))
+
+table2[4,]<-c('LGG','Short', 1.0, "reference", "", digits=3)
+table2[5,]<-c('LGG',  'Intermediate', format(Brain.2[1,1], digits=3), format(Brain.2[1,2], digits=3), format(Brain.2[1,3], digits=3))
+table2[6,]<-c('LGG',  'Long', format(Brain.2[2,1], digits=3), format(Brain.2[2,2], digits=3), format(Brain.2[2,3], digits=3))
+
+table2[7,]<-c('GBM','Short', 1.0, "reference", "", digits=3)
+table2[8,]<-c('GBM',  'Intermediate', format(Brain.3[1,1], digits=3), format(Brain.3[1,2], digits=3), format(Brain.3[1,3], digits=3))
+table2[9,]<-c('GBM',  'Long', format(Brain.3[2,1], digits=3), format(Brain.3[2,2], digits=3), format(Brain.3[2,3], digits=3))
+
+table2[10,]<-c('ANOS','Short', 1.0, "reference", "", digits=3)
+table2[11,]<-c('ANOS',  'Intermediate', format(Brain.4[1,1], digits=3), format(Brain.4[1,2], digits=3), format(Brain.4[1,3], digits=3))
+table2[12,]<-c('ANOS',  'Long', format(Brain.4[2,1], digits=3), format(Brain.4[2,2], digits=3), format(Brain.4[2,3], digits=3))
+
+table2[13,]<-c('OTHG','Short', 1.0, "reference", "", digits=3)
+table2[14,]<-c('OTHG',  'Intermediate', format(Brain.5[1,1], digits=3), format(Brain.5[1,2], digits=3), format(Brain.5[1,3], digits=3))
+table2[15,]<-c('OTHG',  'Long', format(Brain.5[2,1], digits=3), format(Brain.5[2,2], digits=3), format(Brain.5[2,3], digits=3))
+
+table2[16,]<-c('EPDM','Short', 1.0, "reference", "", digits=3)
+table2[17,]<-c('EPDM',  'Intermediate', format(Brain.6[1,1], digits=3), format(Brain.6[1,2], digits=3), format(Brain.6[1,3], digits=3))
+table2[18,]<-c('EPDM',  'Long', format(Brain.6[2,1], digits=3), format(Brain.6[2,2], digits=3), format(Brain.6[2,3], digits=3))
+
+table2[19,]<-c('MB','Short', 1.0, "reference", "", digits=3)
+table2[20,]<-c('MB',  'Intermediate', format(Brain.7[1,1], digits=3), format(Brain.7[1,2], digits=3), format(Brain.7[1,3], digits=3))
+table2[21,]<-c('MB',  'Long', format(Brain.7[2,1], digits=3), format(Brain.7[2,2], digits=3), format(Brain.7[2,3], digits=3))
+
+table2[22,]<-c('PNET','Short', 1.0, "reference", "", digits=3)
+table2[23,]<-c('PNET',  'Intermediate', format(Brain.8[1,1], digits=3), format(Brain.8[1,2], digits=3), format(Brain.8[1,3], digits=3))
+table2[24,]<-c('PNET',  'Long', format(Brain.8[2,1], digits=3), format(Brain.8[2,2], digits=3), format(Brain.8[2,3], digits=3))
+
+table2[25,]<-c('UNS','Short', 1.0, "reference", "", digits=3)
+table2[26,]<-c('UNS',  'Intermediate', format(Brain.9[1,1], digits=3), format(Brain.9[1,2], digits=3), format(Brain.9[1,3], digits=3))
+table2[27,]<-c('UNS',  'Long', format(Brain.9[2,1], digits=3), format(Brain.9[2,2], digits=3), format(Brain.9[2,3], digits=3))
+
+table2$CNS_type_f=factor(table2$`CNS tumor type`, labels=c("Astrocytoma NOS", "CNS overall", "Ependymoma", "GBM", "Low Grade Glioma", "Medulloblastoma",  "Other Glioma", "PNET","Other/Unspecified"))
+table2$HR<-as.numeric(table2$HR)
+table2$LowerCI<-as.numeric(table2$LowerCI)
+table2$UpperCI<-as.numeric(table2$UpperCI)
+```
+
+# Table 4
+```{r}
+#look at rural by volume by race
+
+prop.table(table(brain[which(brain$RACE=="Hispanic"),]$RUCC3, brain[which(brain$RACE=="Hispanic"),]$vol_quartile))
+prop.table(table(brain[which(brain$RACE=="Non-Hispanic White"),]$RUCC3, brain[which(brain$RACE=="Non-Hispanic White"),]$vol_quartile))
+prop.table(table(brain[which(brain$RACE=="Non-Hispanic Black"),]$RUCC3, brain[which(brain$RACE=="Non-Hispanic Black"),]$vol_quartile))
+
+
+prop.table(table(brain[which(brain$RACE=="Hispanic"),]$vol_quartile))
+prop.table(table(brain[which(brain$RACE=="Non-Hispanic White"),]$vol_quartile))
+prop.table(table(brain[which(brain$RACE=="Non-Hispanic Black"),]$vol_quartile))
+
+
+prop.table(table(brain[which(brain$income=="$63,000+"),]$vol_quartile))
+prop.table(table(brain[which(brain$income=="$48,000-$62,999"),]$vol_quartile))
+prop.table(table(brain[which(brain$income=="$38,000-$47,999"),]$vol_quartile))
+prop.table(table(brain[which(brain$income=="Less than $38,000"),]$vol_quartile))
+
+#create binary volume quartile variable
+
+brain$binq<-ifelse(brain$vol_quartile=="Q4", 1, 0)
+table(brain$binq, brain$RACE)
+table(brain$binq, brain$income)
+a<-prop.table(table(brain$binq, brain$income))
+a
+
+model1<-glm(binq ~ RACE, family="binomial", brain)
+summary(model1)
+library(odds.n.ends)
+odds.n.ends(model1)
+
+model2<-glm(binq ~ RACE + Age_cat2 + income, family="binomial", brain)
+summary(model2)
+odds.n.ends(model2)
+
+model3<-glm(binq ~ income, family="binomial", brain)
+summary(model3)
+
+odds.n.ends(model3)
+
+model4<-glm(binq ~ income + RACE + Age_cat2 , family="binomial", brain)
+summary(model4)
+
+odds.n.ends(model4)
+
+vif(model4)
+prop.table(table(brain$educ, brain$income, 1))
+
+##Survival by race
+Brain.race1<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~ RACE + GCD, brain) 
+summary(Brain.race1)
+
+##Survival by race
+Brain.race2<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~ RACE + GCD + RACE*GCD, brain) 
+summary(Brain.race2)
+
+lrtest(Brain.race1, Brain.race2)
+
+Brain.race3<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~ GCD , brain[which(brain$RACE=="Non-Hispanic White"),]) 
+summary(Brain.race3)
+
+Brain.race2<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~ RACE + GCD + RACE*GCD, brain) 
+summary(Brain.race2)
+
+
+##Survival by income
+
+Brain.income1<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~ income +GCD, brain) 
+summary(Brain.income1)
+
+Brain.income2<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~ income +GCD +income*GCD, brain) 
+summary(Brain.income2)
+
+lrtest(Brain.income1, Brain.income2)
+
+
+Brain.income3<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~ GCD , brain[which(brain$income=="$63,000+"),]) 
+summary(Brain.income3)
+
+
+Brain.income3<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~ GCD  , brain[which(brain$income=="$63,000+"),]) 
+summary(Brain.income3)
+
+
+Brain.income4<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~ GCD, brain[which(brain$income=="$48,000-$62,999"),]) 
+summary(Brain.income4)
+
+
+Brain.income5<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~ GCD, brain[which(brain$income=="$38,000-$47,999"),]) 
+summary(Brain.income5)
+
+
+Brain.income6<-coxph(Surv(DX_LASTCONTACT_DEATH_MONTHS, dead)~ GCD, brain[which(brain$income=="Less than $38,000"),]) 
+summary(Brain.income6)
+```
+
+
+##Mediation 
+```{r}
+library(tidyverse)
+install.packages("mma")
+library(mma)
+library(RColorBrewer)
+library(patchwork)
+library(openxlsx)
+
+ForMed <- brain %>%
+  dplyr::select(GCD,vol_quartile,AGE,SEX,RACE,educ,income,DX_LASTCONTACT_DEATH_MONTHS,dead,braintype)%>%
+  as.data.frame()
+###########Function estimating mediation effect of stage for GCD exposure###################
+med_braintype<- function(ForMed) {
+  x=ForMed[,c(2:7)] #covariates and mediators:vol_quartile,AGE,SEX,RACE,educ,income
+  pred=ForMed[,1] #exposure GCD
+  y=Surv(ForMed$DX_LASTCONTACT_DEATH_MONTHS, ForMed$dead) #surival outcome
+  #alpha: the significance level at which to test if the potential mediators (identified by contmed, binmed, and catmed) can be used as a covariate or mediator in estimating y when all variables in x are included in the model. The default value is alpha=0.1
+  #alpha2:the significant level at which to test if a potential mediator is related with the predictor. The default value is alpha2=0.1.
+  #n account for the randomness brought in by the sampling process. 
+  #n2 indicates the number of bootstrap iterations. 
+  set.seed(2020)
+  med<-mma(x,y,pred=pred, predref="Short", catmed=1, catref="Q1", alpha=0.8, alpha2=0.8, n=30,n2=20,type="lp")
+  ie_1 <- summary(med)$bin.result$results$indirect.effect$pred[c(2,4:5),2]
+  ie_2 <- summary(med)$bin.result$results$indirect.effect$pred.temp1[c(2,4:5),2]
+  ie <- rbind(ie_1, ie_2)
+  row.names(ie) <- c("Intermediate", "Long")
+  te <- t(summary(med)$bin.result$results$total.effect[c(2,4:5),])
+  row.names(te) <- c("Intermediate", "Long")
+  de <- t(summary(med)$bin.result$results$direct.effect[c(2,4:5),])
+  row.names(de) <- c("Intermediate", "Long")
+  table1 <- cbind(te,de,ie)
+}
+
+med_race<- function(ForMed) {
+  x=ForMed[,c(2:4,6:7)] #covariates and mediators:vol_quartile,AGE,SEX,educ,income
+  pred=ForMed[,1] #exposure GCD
+  y=Surv(ForMed$DX_LASTCONTACT_DEATH_MONTHS, ForMed$dead) 
+  set.seed(2020)
+  med<-mma(x,y,pred=pred, predref="Short", catmed=1, catref="Q1", alpha=0.8, alpha2=0.8, n=30,n2=20,type="lp")
+  ie_1 <- summary(med)$bin.result$results$indirect.effect$pred[c(2,4:5),2]
+  ie_2 <- summary(med)$bin.result$results$indirect.effect$pred.temp1[c(2,4:5),2]
+  ie <- rbind(ie_1, ie_2)
+  row.names(ie) <- c("Intermediate", "Long")
+  te <- t(summary(med)$bin.result$results$total.effect[c(2,4:5),])
+  row.names(te) <- c("Intermediate", "Long")
+  de <- t(summary(med)$bin.result$results$direct.effect[c(2,4:5),])
+  row.names(de) <- c("Intermediate", "Long")
+  table1 <- cbind(te,de,ie)
+}
+
+med_inc<- function(ForMed) {
+  x=ForMed[,c(2:6)] #covariates and mediators:vol_quartile,AGE,SEX,RACE,educ
+  pred=ForMed[,1] #exposure GCD
+  y=Surv(ForMed$DX_LASTCONTACT_DEATH_MONTHS, ForMed$dead) 
+  set.seed(2020)
+  med<-mma(x,y,pred=pred, predref="Short", catmed=1, catref="Q1", alpha=0.8, alpha2=0.8, n=30,n2=20,type="lp")
+  ie_1 <- summary(med)$bin.result$results$indirect.effect$pred[c(2,4:5),2]
+  ie_2 <- summary(med)$bin.result$results$indirect.effect$pred.temp1[c(2,4:5),2]
+  ie <- rbind(ie_1, ie_2)
+  row.names(ie) <- c("Intermediate", "Long")
+  te <- t(summary(med)$bin.result$results$total.effect[c(2,4:5),])
+  row.names(te) <- c("Intermediate", "Long")
+  de <- t(summary(med)$bin.result$results$direct.effect[c(2,4:5),])
+  row.names(de) <- c("Intermediate", "Long")
+  table1 <- cbind(te,de,ie)
+}
+
+#########################################EOD function########################################
+## Mediation models
+## By cancer type
+tot <- med_braintype(ForMed)
+t3.1.1 <- med_braintype(ForMed %>% filter(braintype=="3.1.1 Specified low-grade astrocytic tumors"))
+t3.1.2 <- med_braintype(ForMed %>% filter(braintype=="3.1.2 Glioblastoma and anaplastic astrocytoma"))
+t3.1.3 <- med_braintype(ForMed %>% filter(braintype=="3.1.3 Astrocytoma, NOS"))
+t3.2 <- med_braintype(ForMed %>% filter(braintype=="3.2 Other glioma"))
+t3.3 <- med_braintype(ForMed %>% filter(braintype=="3.3 Ependymoma")) #problem on converging
+t3.4.1 <- med_braintype(ForMed %>% filter(braintype=="3.4.1 Medulloblastoma")) #does not work
+t3.4.2 <- med_braintype(ForMed %>% filter(braintype=="3.4.2 Supratentorial PNET")) #does not work
+t3.5 <- med_braintype(ForMed %>% filter(braintype=="3.5 Other specified intracranial and intraspinal neoplasms")) #problem on converging
+
+#create subset
+MB<-ForMed[which(ForMed$braintype=="3.4.1 Medulloblastoma"),]
+
+summary(MB)
+
+##by race
+t_white <- med_race(ForMed %>% filter(RACE=="Non-Hispanic White"))
+t_black <- med_race(ForMed %>% filter(RACE=="Non-Hispanic Black"))
+t_other <- med_race(ForMed %>% filter(RACE=="Non-Hispanic Other"))
+t_hisp <- med_race(ForMed %>% filter(RACE=="Hispanic"))
+
+##by income
+t_inc1 <- med_inc(ForMed %>% filter(income=="Less than $38,000"))
+t_inc2 <- med_inc(ForMed %>% filter(income=="$38,000-$47,999"))
+t_inc3 <- med_inc(ForMed %>% filter(income=="$48,000-$62,999"))
+t_inc4 <- med_inc(ForMed %>% filter(income== "$63,000+"))
+
+
+#Combine brain types
+#t_braintype <- rbind(tot,t3.1.1,t3.1.2,t3.1.3,t3.2,t3.3,t3.4.1,t3.4.2,t3.5)
+t_braintype <- rbind(tot,t3.1.1,t3.1.2,t3.1.3,t3.2)
+colnames(t_braintype) <- c("te","te_ub","te_lb","de","de_ub","de_lb","ie","ie_ub","ie_lb")
+
+#Manage data 
+t_braintype <- t_braintype %>%
+  as.tibble() %>%
+  mutate_if(is.character,as.numeric) %>%
+  cbind(braintype=rep(c("CNS overall","3.1.1 Specified low-grade astrocytic tumors",
+                        "3.1.2 Glioblastoma and anaplastic astrocytoma",
+                        "3.1.3 Astrocytoma, NOS","3.2 Other glioma","3.3 Ependymoma",
+                        "3.4.1 Medulloblastoma","3.4.2 Supratentorial PNET",
+                        "3.5 Other specified intracranial and intraspinal neoplasms"),each=2),
+        exposure=rep(c("Intermediate vs. Short","Long vs. Short"))) %>%
+  mutate(MediationProportion=ie/te,
+         te=exp(te),
+         te_ub=exp(te_ub),
+         te_lb=exp(te_lb),
+         de=exp(de),
+         de_ub=exp(de_ub),
+         de_lb=exp(de_lb),
+         ie=exp(ie),
+         ie_ub=exp(ie_ub),
+         ie_lb=exp(ie_lb)) %>%
+  select(braintype,exposure,everything()) %>%
+  mutate(braintype=factor(braintype, levels=c("CNS overall","3.1.1 Specified low-grade astrocytic tumors",
+                        "3.1.2 Glioblastoma and anaplastic astrocytoma",
+                        "3.1.3 Astrocytoma, NOS","3.2 Other glioma","3.3 Ependymoma",
+                        "3.4.1 Medulloblastoma","3.4.2 Supratentorial PNET",
+                        "3.5 Other specified intracranial and intraspinal neoplasms")))
+#Manage data 2
+t_braintype <- t_braintype %>%
+  as.tibble() %>%
+  mutate_if(is.character,as.numeric) %>%
+  cbind(braintype=rep(c("CNS overall","3.1.1 Specified low-grade astrocytic tumors",
+                        "3.1.2 Glioblastoma and anaplastic astrocytoma",
+                        "3.1.3 Astrocytoma, NOS","3.2 Other glioma"),each=2),
+        exposure=rep(c("Intermediate vs. Short","Long vs. Short"))) %>%
+  mutate(MediationProportion=ie/te,
+         te=exp(te),
+         te_ub=exp(te_ub),
+         te_lb=exp(te_lb),
+         de=exp(de),
+         de_ub=exp(de_ub),
+         de_lb=exp(de_lb),
+         ie=exp(ie),
+         ie_ub=exp(ie_ub),
+         ie_lb=exp(ie_lb)) %>%
+  select(braintype,exposure,everything()) %>%
+  mutate(braintype=factor(braintype, levels=c("CNS overall","3.1.1 Specified low-grade astrocytic tumors",
+                        "3.1.2 Glioblastoma and anaplastic astrocytoma",
+                        "3.1.3 Astrocytoma, NOS","3.2 Other glioma"
+                        )))
+##combine race & income
+t_raceinc <- rbind(t_white, t_black, t_other, t_hisp, t_inc1, t_inc2, t_inc3, t_inc4)
+colnames(t_raceinc) <- c("te","te_ub","te_lb","de","de_ub","de_lb","ie","ie_ub","ie_lb")
+
+#Manage data 
+t_raceinc <- t_raceinc %>%
+  as.tibble() %>%
+  mutate_if(is.character,as.numeric) %>%
+  cbind(group=rep(c("Non-Hispanic White","Non-Hispanic Black","Non-Hispanic Other","Hispanic","Less than $38,000", "$38,000-$47,999", "$48,000-$62,999", "$63,000+"),each=2),
+        exposure=rep(c("Intermediate vs. Short","Long vs. Short"))) %>%
+  mutate(MediationProportion=ie/te,
+         te=exp(te),
+         te_ub=exp(te_ub),
+         te_lb=exp(te_lb),
+         de=exp(de),
+         de_ub=exp(de_ub),
+         de_lb=exp(de_lb),
+         ie=exp(ie),
+         ie_ub=exp(ie_ub),
+         ie_lb=exp(ie_lb)) %>%
+  select(group,exposure,everything()) %>%
+  mutate(group=factor(group, levels=c("Non-Hispanic White","Non-Hispanic Black","Non-Hispanic Other","Hispanic","Less than $38,000", "$38,000-$47,999", "$48,000-$62,999", "$63,000+")))
+
+
+list <- list("Braintype"=t_braintype, "RaceInc"=t_raceinc)
+write.xlsx(list, "/Users/kijohnson/Box/A_T Drive - kjohnson/Research/Projects/NCDB/AYA Geographic factors stage/Brain/MediationResults.xlsx", colNames=T, borders="rows")
+```
+
+```{r}
+data<-brain[which(brain$GCD=="Long"),]
+
+table1(~vol_quartile|RACE, data)
+table1(~vol_quartile|income, data)
+help(table1)
+
+```
+
